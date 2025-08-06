@@ -1,3 +1,5 @@
-/Data/Spatial_data/
+/Data/
 /deprecated/
 /__pycache__/
+/Exports/
+/migration_guide.py 

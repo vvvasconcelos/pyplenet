@@ -3,7 +3,7 @@
 Simple test of export functionality.
 """
 
-from adjacency_graph import InMemoryGraph
+from graph import InMemoryGraph
 from graph_export import export_all_formats, export_binary_edges, export_edge_list_txt
 
 # Create a simple test graph

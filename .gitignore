@@ -3,3 +3,8 @@
 /__pycache__/
 /Exports/
 /migration_guide.py 
+/graph_data/
+test.py
+test_export.py
+/Data/
+/Fake_Data/

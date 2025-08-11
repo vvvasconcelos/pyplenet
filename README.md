@@ -22,7 +22,7 @@ pyplenet/
 └── demo_adjacency.py   # Example usage
 ```
 
-## 🔧 Core Components
+## Core Components
 
 ### FileBasedGraph (`graph.py`)
 The core graph data structure optimized for large networks:
@@ -46,7 +46,7 @@ Export networks to standard formats:
 - **SNAP format**: Stanford Network Analysis Platform format
 - **CSV**: Spreadsheet-compatible format
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Basic Usage
 
@@ -102,6 +102,7 @@ large_graph = generate(
 
 ## Network Statistics
 
+NOTE: Not (yet) optimized for larger networks.
 Calculate network properties:
 
 ```python
@@ -152,8 +153,9 @@ age,gender,education,n
 ...
 ```
 
-### Household/Link Data Format
-Excel/CSV file defining relationships:
+### Link Data Format
+Excel/CSV file defining number of edges between two separate groups:
+TODO: make _src and _dst suffixes customizable
 
 ```csv
 age_src,gender_src,education_src,age_dst,gender_dst,education_dst,n

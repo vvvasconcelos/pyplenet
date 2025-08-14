@@ -2,22 +2,51 @@ import numpy as np
 import math
 import random
 
-def connect_nodes(G, src_nodes, dst_nodes, src_id, dst_id,
+def establish_links(G, src_nodes, dst_nodes, src_id, dst_id,
                   target_link_count, fraction, reciprocity_p):
     """
-    Connect nodes using preferential attachment algorithm.
-    Optimized for adjacency list representation.
+    Establishes target_link_count # of links between src_nodes and dst_nodes on graph G.
+
+    Parameters
+    ----------
+    G : FileBasedGraph instance
+        The graph instance on which to create the links.   
+        Must already contain all the nodes necessary (see generate.init_nodes())
+    src_nodes : list
+        List containing the source nodes.
+    dst_nodes : list
+        List contianing the destination nodes.
+    src_id : int
+        Source group ID.
+    dst_id : int
+        Destination group ID.
+    target_link_count : int
+        The number of links to be formed between the source and destination group.
+    fraction : float
+        Value between 0 and 1 inclusive.   
+        Dictates the fraction of destination nodes placed in the initial destination bin.   
+        For detailed description see Kamiel's thesis.
+    reciprocity_p : float
+        Value between 0 and 1 inclusive.   
+        Probability that with each (source node) -> (destination node) link   
+        a (destination node) -> (source node) link is created too.
+
+    Returns
+    -------
+    boolean
+        A boolean to check whether the existing initial number of links << target number of links.   
+        This can fail thanks to reciprocity.
     """
     
-    success_bool = True 
+    link_n_check = True 
     attempts = 0
     max_attempts = target_link_count * 10
     
     num_links = G.existing_num_links.get((src_id, dst_id), 0)
     
-    # TODO add handling of this, currently allows for ~20% error (plus 20 to give more leniency for small numbers)
+    # TODO add handling of this, currently allows for ~20% error
     if num_links > target_link_count + target_link_count*0.2:
-        success_bool = False
+        link_n_check = False
         
     n0_links = num_links
     # see DB bin in thesis - preferential attachment setup
@@ -51,4 +80,4 @@ def connect_nodes(G, src_nodes, dst_nodes, src_id, dst_id,
     print(f" | links added: {num_links - n0_links} ", end="")
     G.existing_num_links[(src_id, dst_id)] += (num_links - n0_links)
     
-    return success_bool
+    return link_n_check

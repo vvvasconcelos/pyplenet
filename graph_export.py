@@ -1,6 +1,15 @@
 """
-Export functions for adjacency list graphs to compact, non-Python formats.
-Supports multiple standard graph file formats.
+Export functions for FileBasedGraph instances.
+
+Functions
+---------
+export_edge_list_txt : Export as simple edge list text file
+export_adjacency_list_txt : Export as adjacency list text file  
+export_binary_edges : Export as compact binary edge list
+export_csv_edges : Export as CSV edge list with optional attributes
+export_mtx_format : Export in Matrix Market sparse matrix format
+export_snap_format : Export in Stanford SNAP format
+export_all_formats : Export in all supported formats
 """
 import struct
 import gzip
@@ -9,12 +18,18 @@ import csv
 def export_edge_list_txt(G, filename, compressed=False):
     """
     Export graph as simple edge list text file.
-    Format: each line contains "src dst"
     
-    Args:
-        G: Graph object (InMemoryGraph or FileBasedGraph)
-        filename: Output filename
-        compressed: If True, compress with gzip
+    Creates a text file where each line contains one edge in the format "src dst".
+    Includes header comments with graph statistics. Supports optional gzip compression.
+    
+    Parameters
+    ----------
+    G : FileBasedGraph or InMemoryGraph
+        The graph object to export
+    filename : str
+        Output filename path
+    compressed : bool, optional
+        If True, compress output with gzip. Default is False.
     """
     open_func = gzip.open if compressed else open
     mode = 'wt' if compressed else 'w'
@@ -49,12 +64,25 @@ def export_edge_list_txt(G, filename, compressed=False):
 def export_adjacency_list_txt(G, filename, compressed=False):
     """
     Export graph as adjacency list text file.
-    Format: each line contains "src: dst1 dst2 dst3 ..."
     
-    Args:
-        G: Graph object
-        filename: Output filename  
-        compressed: If True, compress with gzip
+    Creates a text file where each line contains a node and its neighbors
+    in the format "src: dst1 dst2 dst3 ...". Isolated nodes are included
+    with empty neighbor lists.
+    
+    Parameters
+    ----------
+    G : FileBasedGraph or InMemoryGraph
+        The graph object to export
+    filename : str
+        Output filename path
+    compressed : bool, optional
+        If True, compress output with gzip. Default is False.
+        
+    Notes
+    -----
+    For file-based graphs, this function uses the graph's get_out_edges()
+    generator to maintain memory efficiency. This requires multiple file
+    scans but keeps memory usage constant regardless of graph size.
     """
     open_func = gzip.open if compressed else open
     mode = 'wt' if compressed else 'w'
@@ -64,59 +92,41 @@ def export_adjacency_list_txt(G, filename, compressed=False):
         f.write(f"# Directed adjacency list: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges\n")
         f.write("# Format: src: dst1 dst2 dst3 ...\n")
         
-        if hasattr(G, 'adjacency_file'):
-            # File-based graph - read adjacency file directly and group by source
-            import os
-            from collections import defaultdict
-            
-            if os.path.exists(G.adjacency_file):
-                # Build adjacency lists by reading file once
-                adjacency_lists = defaultdict(list)
-                
-                with open(G.adjacency_file, 'rb') as adj_file:
-                    while True:
-                        data = adj_file.read(80000)  # Read in chunks
-                        if not data:
-                            break
-                        num_edges = len(data) // 8
-                        edges = struct.unpack(f'{num_edges * 2}I', data)
-                        for i in range(0, len(edges), 2):
-                            src, dst = edges[i], edges[i + 1]
-                            adjacency_lists[src].append(dst)
-                
-                # Write adjacency lists for all nodes
-                for src in range(G.number_of_nodes()):
-                    neighbors = adjacency_lists.get(src, [])
-                    if neighbors:
-                        neighbors_str = " ".join(map(str, neighbors))
-                        f.write(f"{src}: {neighbors_str}\n")
-                    else:
-                        f.write(f"{src}:\n")  # Isolated node
+        for src in range(G.number_of_nodes()):
+            neighbors = list(G.get_out_edges(src))
+            if neighbors:
+                neighbors_str = " ".join(map(str, neighbors))
+                f.write(f"{src}: {neighbors_str}\n")
             else:
-                # No adjacency file, write empty lists
-                for src in range(G.number_of_nodes()):
-                    f.write(f"{src}:\n")
-        else:
-            # In-memory graph - use existing adjacency lists
-            for src in range(G.number_of_nodes()):
-                neighbors = list(G.get_out_edges(src))
-                if neighbors:
-                    neighbors_str = " ".join(map(str, neighbors))
-                    f.write(f"{src}: {neighbors_str}\n")
-                else:
-                    f.write(f"{src}:\n")  # Isolated node
+                f.write(f"{src}:\n")  # Isolated node
     
     print(f"Adjacency list exported to {filename}")
 
 def export_binary_edges(G, filename):
     """
     Export graph as binary edge list.
-    Format: binary file with 8 bytes per edge (src:4bytes, dst:4bytes)
-    Very compact and fast to read.
     
-    Args:
-        G: Graph object
-        filename: Output filename
+    Creates a compact binary file with 8-byte header (num_nodes, num_edges)
+    followed by 8 bytes per edge (src:4bytes, dst:4bytes). This is the most
+    space-efficient export format and fastest to read.
+    
+    Parameters
+    ----------
+    G : FileBasedGraph or InMemoryGraph
+        The graph object to export
+    filename : str
+        Output filename path
+        
+    Notes
+    -----
+    The binary format uses little-endian unsigned 32-bit integers.
+    For file-based graphs, the adjacency file data is copied directly
+    after adding the header, making this very efficient.
+    
+    File format:
+    - Bytes 0-3: num_nodes (uint32)
+    - Bytes 4-7: num_edges (uint32)  
+    - Bytes 8+: edge data, 8 bytes per edge (src_id, dst_id as uint32)
     """
     with open(filename, 'wb') as f:
         # Write header: num_nodes (4 bytes), num_edges (4 bytes)
@@ -144,10 +154,27 @@ def export_csv_edges(G, filename, include_attributes=False):
     """
     Export graph as CSV edge list.
     
-    Args:
-        G: Graph object
-        filename: Output filename
-        include_attributes: If True, include node attributes
+    Creates a CSV file with edge data. Optionally includes node attributes
+    for both source and destination nodes. Uses standard CSV format with
+    comma separation and quoted fields when necessary.
+    
+    Parameters
+    ----------
+    G : FileBasedGraph or InMemoryGraph
+        The graph object to export
+    filename : str
+        Output filename path
+    include_attributes : bool, optional
+        If True, include node attributes as additional columns.
+        Default is False.
+        
+    Notes
+    -----
+    When include_attributes=True, the CSV will have columns:
+    src, dst, src_attr1, dst_attr1, src_attr2, dst_attr2, ...
+    
+    If nodes have different attribute sets, missing attributes
+    are filled with empty strings.
     """
     with open(filename, 'w', newline='') as f:
         if include_attributes:
@@ -224,11 +251,13 @@ def export_csv_edges(G, filename, include_attributes=False):
 def export_mtx_format(G, filename):
     """
     Export graph in Matrix Market (.mtx) format.
-    Standard sparse matrix format, widely supported.
     
-    Args:
-        G: Graph object
-        filename: Output filename
+    Parameters
+    ----------
+    G : FileBasedGraph or InMemoryGraph
+        The graph object to export
+    filename : str
+        Output filename path
     """
     with open(filename, 'w') as f:
         # Write header
@@ -262,11 +291,13 @@ def export_mtx_format(G, filename):
 def export_snap_format(G, filename):
     """
     Export graph in SNAP format (Stanford Network Analysis Platform).
-    Simple format: # comments followed by edge list.
     
-    Args:
-        G: Graph object
-        filename: Output filename
+    Parameters
+    ----------
+    G : FileBasedGraph or InMemoryGraph
+        The graph object to export
+    filename : str
+        Output filename path
     """
     with open(filename, 'w') as f:
         # Write SNAP header
@@ -298,11 +329,31 @@ def export_snap_format(G, filename):
 
 def export_all_formats(G, base_filename):
     """
-    Export graph in all supported formats for convenience.
+    Export graph in all supported formats.
     
-    Args:
-        G: Graph object
-        base_filename: Base name for output files (extensions will be added)
+    Exports the graph in multiple standard formats using a common base filename.
+    Different extensions are automatically added for each format. Also prints
+    file size comparison to help choose the most appropriate format.
+    
+    Parameters
+    ----------
+    G : FileBasedGraph or InMemoryGraph
+        The graph object to export
+    base_filename : str
+        Base name for output files. Extensions will be added automatically.
+        
+    Notes
+    -----
+    Creates the following files:
+    - {base}_edges.txt : Plain text edge list
+    - {base}_edges.txt.gz : Compressed text edge list  
+    - {base}_adj.txt : Adjacency list format
+    - {base}_edges.csv : CSV edge list
+    - {base}_edges.bin : Binary edge list (most compact)
+    - {base}.mtx : Matrix Market format
+    - {base}.snap : SNAP format
+    
+    Prints file size comparison to help select optimal format for your use case.
     """
     print(f"Exporting graph ({G.number_of_nodes()} nodes, {G.number_of_edges()} edges) in multiple formats...")
     
@@ -346,43 +397,3 @@ def export_all_formats(G, base_filename):
             else:
                 size_str = f"{size} bytes"
             print(f"  {description}: {size_str}")
-
-# Reading functions for the exported formats
-def read_binary_edges(filename):
-    """
-    Read binary edge list file.
-    Returns: (num_nodes, num_edges, edge_iterator)
-    """
-    with open(filename, 'rb') as f:
-        # Read header
-        header = f.read(8)
-        num_nodes, num_edges = struct.unpack('II', header)
-        
-        def edge_iterator():
-            while True:
-                data = f.read(8)
-                if not data:
-                    break
-                src, dst = struct.unpack('II', data)
-                yield src, dst
-        
-        return num_nodes, num_edges, edge_iterator()
-
-def read_edge_list_txt(filename):
-    """
-    Read text edge list file.
-    Returns: edge_iterator
-    """
-    def edge_iterator():
-        open_func = gzip.open if filename.endswith('.gz') else open
-        mode = 'rt' if filename.endswith('.gz') else 'r'
-        
-        with open_func(filename, mode) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        yield int(parts[0]), int(parts[1])
-    
-    return edge_iterator()

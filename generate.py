@@ -1,15 +1,75 @@
-from utils import find_nodes, read_file, desc_groups, export_group_to_attrs_csv, export_group_to_nodes_csv
-from grn import connect_nodes
-from netstats import runstats
-from graph import FileBasedGraph
-from graph_export import export_all_formats, export_binary_edges, export_edge_list_txt, export_csv_edges
-import numpy as np
+"""
+Network generation module for PyPleNet.
+
+This module provides functions to generate large-scale population networks
+using file-based graph storage. It creates nodes from population data and
+establishes edges based on interaction patterns, with support for scaling,
+reciprocity, and preferential attachment.
+
+The module is designed for generating networks that may be too large to fit
+in memory, using the FileBasedGraph class for efficient disk-based storage.
+
+Functions
+---------
+init_nodes : Initialize nodes in the graph from population data
+init_links : Initialize edges in the graph from interaction data  
+generate : Main function to generate a complete network
+
+Examples
+--------
+>>> graph = generate('population.csv', 'interactions.xlsx', 
+...                  fraction=0.4, scale=0.1, reciprocity_p=0.2)
+>>> print(f"Generated network: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges")
+"""
+import os
 import math
 import shutil
-import os
 
-def init_nodes(G, pops_path, scale):
-    """Initialize nodes in the graph based on population data."""
+import numpy as np
+
+from utils import (find_nodes, read_file, desc_groups, 
+                   export_group_to_attrs_csv, export_group_to_nodes_csv)
+from grn import establish_links
+from netstats import runstats
+from graph import FileBasedGraph
+from graph_export import export_all_formats
+
+def init_nodes(G, pops_path, scale = 1):
+    """
+    Initialize nodes in the graph from population data.
+    
+    Reads population group data from a file and creates nodes with attributes.
+    Each group is assigned a number of nodes based on the population count
+    scaled by the scale parameter. Node attributes are derived from the 
+    characteristic columns in the population data.
+    
+    Parameters
+    ----------
+    G : FileBasedGraph
+        The FileBasedGraph object to be populated with nodes.
+    pops_path : str
+        The filepath for the population group sizes file. Can be CSV or Excel format.
+    scale : float, optional
+        Scaling factor for the number of nodes created. Default is 1.
+        Must be larger than 0. Final number of nodes = original_count * scale.
+        
+    Notes
+    -----
+    This function modifies the graph object in-place by:
+    - Adding nodes with their attributes
+    - Setting up group-to-attributes and attributes-to-group mappings
+    - Creating group-to-nodes mappings for efficient lookup
+    - Initializing link tracking between all group pairs
+    
+    The function reads the population file using desc_groups() which extracts
+    both group descriptions and characteristic columns automatically.
+    
+    Examples
+    --------
+    >>> G = FileBasedGraph("my_graph")
+    >>> init_nodes(G, "population.csv", scale=0.5)
+    >>> print(f"Initialized {G.number_of_nodes()} nodes")
+    """
     group_desc_dict, characteristic_cols = desc_groups(pops_path)
     
     group_to_attrs = {}
@@ -43,9 +103,48 @@ def init_nodes(G, pops_path, scale):
     G.existing_num_links = {(src, dst): 0 for src in group_ids for dst in group_ids}
 
 def init_links(G, links_path, fraction, scale, reciprocity_p):
-    """Initialize links in the graph based on link data."""
+    """
+    Initialize edges in the graph based on interaction data.
     
-    success_bool = True
+    Reads interaction/link data from a file and creates edges between nodes
+    based on group attributes. Uses preferential attachment and supports
+    reciprocal edge creation. The number of links is scaled by scale^2.
+    
+    Parameters
+    ----------
+    G : FileBasedGraph
+        The graph object with nodes already initialized.
+    links_path : str
+        Path to the links/interactions data file. Can be CSV or Excel format.
+    fraction : float
+        Fraction parameter for preferential attachment in establish_links().
+        Value between 0 and 1, controls the distribution of connections.
+    scale : float
+        Scaling factor applied to the population. Link scaling = scale^2.
+    reciprocity_p : float
+        Probability of creating reciprocal edges. Value between 0 and 1.
+        
+    Notes
+    -----
+    The function processes each row in the links file:
+    - Extracts source and destination group attributes (columns ending with '_src' and '_dst')
+    - Finds nodes matching these attributes using find_nodes()
+    - Establishes the requested number of links using establish_links()
+    - Tracks warnings for cases where existing links exceed requests
+    
+    Link scaling uses scale^2 because both source and destination populations
+    are scaled by the same factor, so the interaction potential scales quadratically.
+    
+    Progress is displayed during processing, showing current row number.
+    
+    Examples
+    --------
+    >>> init_links(G, "interactions.xlsx", fraction=0.4, scale=0.1, reciprocity_p=0.2)
+    Row 5 of 20
+    Total requested links: 1250
+    """
+    
+    check_bool = True
     warnings = []
     links_scale = scale**2
     
@@ -72,7 +171,7 @@ def init_links(G, links_path, fraction, scale, reciprocity_p):
             continue 
         
         # Connect the nodes
-        check_bool = connect_nodes(G, src_nodes, dst_nodes, src_id, dst_id,
+        check_bool = establish_links(G, src_nodes, dst_nodes, src_id, dst_id,
                     num_requested_links, fraction, reciprocity_p)
         
         if not check_bool:
@@ -86,16 +185,64 @@ def init_links(G, links_path, fraction, scale, reciprocity_p):
 
 def generate(pops_path, links_path, fraction, scale, reciprocity_p, base_path="graph_data"):
     """
-    Generate a network using adjacency list representation.
+    Generate a complete network using file-based adjacency list representation.
     
-    Args:
-        pops_path: Path to population data
-        links_path: Path to links data  
-        fraction: Fraction parameter for preferential attachment
-        scale: Scaling factor for population and links
-        reciprocity_p: Probability of reciprocal edges
-        use_file_based: If True, use file-based storage; if False, use in-memory
-        base_path: Base path for file-based storage
+    This is the main function that orchestrates the entire network generation
+    process. It creates a file-based graph, initializes nodes from population
+    data, establishes links from interaction data, and finalizes the graph
+    for persistence.
+    
+    Parameters
+    ----------
+    pops_path : str
+        Path to population data file (CSV or Excel format).
+    links_path : str
+        Path to links/interactions data file (CSV or Excel format).
+    fraction : float
+        Fraction parameter for preferential attachment. Value between 0 and 1.
+    scale : float
+        Scaling factor for population and links. Must be > 0.
+        Nodes are scaled by this factor, links by scale^2.
+    reciprocity_p : float
+        Probability of reciprocal edges. Value between 0 and 1.
+    base_path : str, optional
+        Base directory path for file-based graph storage. Default is "graph_data".
+        Directory will be recreated if it exists.
+        
+    Returns
+    -------
+    FileBasedGraph
+        The generated and finalized graph object.
+        
+    Notes
+    -----
+    The function performs these steps:
+    1. Clean and create the base directory for graph storage
+    2. Initialize a FileBasedGraph instance
+    3. Create nodes from population data (init_nodes)
+    4. Create edges from interaction data (init_links)  
+    5. Finalize the graph to ensure data persistence
+    
+    The base_path directory is completely recreated to ensure a clean state.
+    All graph data including adjacency files and metadata are stored there.
+    
+    Examples
+    --------
+    >>> graph = generate('pop.csv', 'links.xlsx', 0.4, 0.1, 0.2)
+    Generating Nodes
+    1000 nodes initialized
+    
+    Generating Links
+    -----------------
+    Row 10 of 10
+    Total requested links: 500
+    -----------------
+    Network Generated
+    
+    Graph finalized: 1000 nodes, 500 edges
+    
+    >>> graph = generate('pop.csv', 'links.xlsx', 0.4, 0.1, 0.2, 
+    ...                  base_path="my_network")
     """
     
     print("Generating Nodes")
@@ -103,7 +250,7 @@ def generate(pops_path, links_path, fraction, scale, reciprocity_p, base_path="g
     if os.path.exists(base_path):
         shutil.rmtree(base_path)
     os.makedirs(base_path)
-    # Choose graph implementation based on expected size
+    
     G = FileBasedGraph(base_path)
     
     init_nodes(G, pops_path, scale)
@@ -123,24 +270,26 @@ def generate(pops_path, links_path, fraction, scale, reciprocity_p, base_path="g
     return G
 
 if __name__ == "__main__":
-    pops = 'Fake_Data/fake_tab_n.xlsx'
-    links = 'Data/tab_werkschool.xlsx'
-    fraction = 0.4
-    scale = 0.1  # Reduced for testing
-    reciprocity = 0
+    # Example network generation parameters
+    pops = 'Data/fake_tab_n.csv'        # Population groups data
+    links = 'Data/tab_werkschool.xlsx'   # Interaction/links data
+    fraction = 0.4                       # Preferential attachment fraction
+    scale = 0.1                         # Population scaling (reduced for testing)
+    reciprocity = 0                     # No reciprocal edges in this example
     
+    # Generate the network
     graph = generate(pops, links, fraction, scale, reciprocity)
     
-    # Export group information
+    # Export group metadata for analysis
     export_group_to_attrs_csv(graph.group_to_attrs, 'Exports/gTa_export.csv')
     export_group_to_nodes_csv(graph.group_to_nodes, "Exports/gTn_export.csv")
     
     print(f"Graph saved to {graph.base_path}/")
     
-    # Export in compact non-Python formats
+    # Export in multiple standard formats for interoperability
     print("\nExporting graph in compact formats...")
     base_name = "Exports/network"
     export_all_formats(graph, base_name)
         
-    # Run statistics
-    #runstats(graph)
+    # Optionally run network statistics (currently commented out)
+    # runstats(graph)

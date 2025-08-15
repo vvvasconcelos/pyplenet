@@ -56,8 +56,9 @@ def establish_links(G, src_nodes, dst_nodes, src_id, dst_id,
         s = random.choice(src_nodes)
         d_from_db = random.choice(d_nodes_bin)
         
+        # TODO add duplicate avoidance
         # For adjacency lists, we skip the expensive has_edge check for performance
-        # Instead we allow some duplicate edges (they'll be handled by the data structure)
+        # Instead we allow some duplicate edges.
         if s != d_from_db:
             G.add_edge(s, d_from_db)
             num_links += 1

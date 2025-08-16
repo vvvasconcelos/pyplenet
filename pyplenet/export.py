@@ -1,21 +1,28 @@
 """
 Export functions for FileBasedGraph instances.
 
-Functions
+Graph export functions
 ---------
-export_edge_list_txt : Export as simple edge list text file
-export_adjacency_list_txt : Export as adjacency list text file  
-export_binary_edges : Export as compact binary edge list
-export_csv_edges : Export as CSV edge list with optional attributes
-export_mtx_format : Export in Matrix Market sparse matrix format
-export_snap_format : Export in Stanford SNAP format
-export_all_formats : Export in all supported formats
+
+edge_txt : Export as simple edge list text file
+adjacency_txt : Export as adjacency list text file  
+edge_binary : Export as compact binary edge list
+edge_csv : Export as CSV edge list with optional attributes
+mtx : Export in Matrix Market sparse matrix format
+snap : Export in Stanford SNAP format
+all : Export in all supported formats
+
+Metadata export functions
+--------
+
+group_to_attrs_csv : Export the group to attributes metadata dict to csv
+group_to_nodes_csv : Export the group to nodes metadata dict to csv
 """
 import struct
 import gzip
 import csv
 
-def export_edge_list_txt(G, filename, compressed=False):
+def edge_txt(G, filename, compressed=False):
     """
     Export graph as simple edge list text file.
     
@@ -61,7 +68,7 @@ def export_edge_list_txt(G, filename, compressed=False):
     
     print(f"Edge list exported to {filename}")
 
-def export_adjacency_list_txt(G, filename, compressed=False):
+def adjacency_txt(G, filename, compressed=False):
     """
     Export graph as adjacency list text file.
     
@@ -102,7 +109,7 @@ def export_adjacency_list_txt(G, filename, compressed=False):
     
     print(f"Adjacency list exported to {filename}")
 
-def export_binary_edges(G, filename):
+def edge_binary(G, filename):
     """
     Export graph as binary edge list.
     
@@ -150,7 +157,7 @@ def export_binary_edges(G, filename):
     
     print(f"Binary edge list exported to {filename}")
 
-def export_csv_edges(G, filename, include_attributes=False):
+def edge_csv(G, filename, include_attributes=False):
     """
     Export graph as CSV edge list.
     
@@ -248,7 +255,7 @@ def export_csv_edges(G, filename, include_attributes=False):
     
     print(f"CSV edge list exported to {filename}")
 
-def export_mtx_format(G, filename):
+def mtx(G, filename):
     """
     Export graph in Matrix Market (.mtx) format.
     
@@ -288,7 +295,7 @@ def export_mtx_format(G, filename):
     
     print(f"Matrix Market format exported to {filename}")
 
-def export_snap_format(G, filename):
+def snap(G, filename):
     """
     Export graph in SNAP format (Stanford Network Analysis Platform).
     
@@ -327,7 +334,7 @@ def export_snap_format(G, filename):
     
     print(f"SNAP format exported to {filename}")
 
-def export_all_formats(G, base_filename):
+def all(G, base_filename):
     """
     Export graph in all supported formats.
     
@@ -358,19 +365,19 @@ def export_all_formats(G, base_filename):
     print(f"Exporting graph ({G.number_of_nodes()} nodes, {G.number_of_edges()} edges) in multiple formats...")
     
     # Text formats
-    export_edge_list_txt(G, f"{base_filename}_edges.txt")
-    export_edge_list_txt(G, f"{base_filename}_edges.txt.gz", compressed=True)
-    export_adjacency_list_txt(G, f"{base_filename}_adj.txt")
+    edge_txt(G, f"{base_filename}_edges.txt")
+    edge_txt(G, f"{base_filename}_edges.txt.gz", compressed=True)
+    adjacency_txt(G, f"{base_filename}_adj.txt")
     
     # CSV format
-    export_csv_edges(G, f"{base_filename}_edges.csv")
+    edge_csv(G, f"{base_filename}_edges.csv")
     
     # Binary format (most compact)
-    export_binary_edges(G, f"{base_filename}_edges.bin")
+    edge_binary(G, f"{base_filename}_edges.bin")
     
     # Standard formats
-    export_mtx_format(G, f"{base_filename}.mtx")
-    export_snap_format(G, f"{base_filename}.snap")
+    mtx(G, f"{base_filename}.mtx")
+    snap(G, f"{base_filename}.snap")
     
     print("All formats exported successfully!")
     
@@ -397,3 +404,31 @@ def export_all_formats(G, base_filename):
             else:
                 size_str = f"{size} bytes"
             print(f"  {description}: {size_str}")
+            
+def group_to_attrs_csv(group_to_attrs, filename):
+    """Exports the group_to_attrs dict to CSV."""
+    # Get all attribute keys
+    all_keys = set()
+    for attrs in group_to_attrs.values():
+        all_keys.update(attrs.keys())
+    fieldnames = ['group_id'] + sorted(all_keys)
+    with open(filename, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for group_id, attrs in group_to_attrs.items():
+            row = {'group_id': group_id}
+            row.update(attrs)
+            writer.writerow(row)
+
+def group_to_nodes_csv(group_to_nodes, filename):
+    """
+    Exports the group_to_attrs dict to CSV.    
+    The nodes are initialized sequentially
+    so start and end IDs are all that is needed.
+    """
+    with open(filename, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['group_id', 'start_node_id', 'end_node_id'])
+        for group_id, node_ids in group_to_nodes.items():
+            if node_ids:
+                writer.writerow([group_id, node_ids[0], node_ids[-1]])

@@ -441,7 +441,7 @@ if __name__ == "__main__":
     your specific graph format and file paths.
     """
     # Import graph class - update path as needed
-    from graph import FileBasedGraph
+    from pyplenet.core.graph import FileBasedGraph
     
     try:
         # Example: Load a file-based graph

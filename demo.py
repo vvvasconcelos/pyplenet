@@ -9,8 +9,8 @@ import shutil
 import os
 
 # Import PyPleNet modules
-from generate import generate
-from graph import FileBasedGraph
+from pyplenet.core.generate import generate
+from pyplenet.core.graph import FileBasedGraph
 
 # Network generation parameters
 pops = 'Data/fake_tab_n.csv'        # Population groups data

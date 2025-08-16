@@ -27,12 +27,9 @@ import shutil
 
 import numpy as np
 
-from utils import (find_nodes, read_file, desc_groups, 
-                   export_group_to_attrs_csv, export_group_to_nodes_csv)
-from grn import establish_links
-from netstats import runstats
-from graph import FileBasedGraph
-from graph_export import export_all_formats
+from pyplenet.core.utils import (find_nodes, read_file, desc_groups)
+from pyplenet.core.grn import establish_links
+from pyplenet.core.graph import FileBasedGraph
 
 def init_nodes(G, pops_path, scale = 1):
     """
@@ -268,28 +265,3 @@ def generate(pops_path, links_path, fraction, scale, reciprocity_p, base_path="g
     G.finalize()
     
     return G
-
-if __name__ == "__main__":
-    # Example network generation parameters
-    pops = 'Data/fake_tab_n.csv'        # Population groups data
-    links = 'Data/tab_werkschool.xlsx'   # Interaction/links data
-    fraction = 0.4                       # Preferential attachment fraction
-    scale = 0.1                         # Population scaling (reduced for testing)
-    reciprocity = 0                     # No reciprocal edges in this example
-    
-    # Generate the network
-    graph = generate(pops, links, fraction, scale, reciprocity)
-    
-    # Export group metadata for analysis
-    export_group_to_attrs_csv(graph.group_to_attrs, 'Exports/gTa_export.csv')
-    export_group_to_nodes_csv(graph.group_to_nodes, "Exports/gTn_export.csv")
-    
-    print(f"Graph saved to {graph.base_path}/")
-    
-    # Export in multiple standard formats for interoperability
-    print("\nExporting graph in compact formats...")
-    base_name = "Exports/network"
-    export_all_formats(graph, base_name)
-        
-    # Optionally run network statistics (currently commented out)
-    # runstats(graph)

@@ -180,7 +180,7 @@ def init_links(G, links_path, fraction, scale, reciprocity_p):
         for warning in warnings:
             print(warning)
 
-def generate(pops_path, links_path, fraction, scale, reciprocity_p, base_path="graph_data"):
+def generate(pops_path, links_path, preferential_attachment, scale, reciprocity, base_path="graph_data"):
     """
     Generate a complete network using file-based adjacency list representation.
     
@@ -195,8 +195,8 @@ def generate(pops_path, links_path, fraction, scale, reciprocity_p, base_path="g
         Path to population data file (CSV or Excel format).
     links_path : str
         Path to links/interactions data file (CSV or Excel format).
-    fraction : float
-        Fraction parameter for preferential attachment. Value between 0 and 1.
+    preferetnial_attachment : float
+        Parameter for strength of preferential attachment. Value between 0 and 1.
     scale : float
         Scaling factor for population and links. Must be > 0.
         Nodes are scaled by this factor, links by scale^2.
@@ -204,7 +204,7 @@ def generate(pops_path, links_path, fraction, scale, reciprocity_p, base_path="g
         Probability of reciprocal edges. Value between 0 and 1.
     base_path : str, optional
         Base directory path for file-based graph storage. Default is "graph_data".
-        Directory will be recreated if it exists.
+        Directory will be recreated if it already exists.
         
     Returns
     -------
@@ -254,9 +254,12 @@ def generate(pops_path, links_path, fraction, scale, reciprocity_p, base_path="g
     print(f"{G.number_of_nodes()} nodes initialized")
     print()
     
+    # invert the preferential attachment parameter
+    preferential_attachment_fraction = 1 - preferential_attachment
+    
     print("Generating Links")
     print("-----------------")
-    init_links(G, links_path, fraction, scale, reciprocity_p)
+    init_links(G, links_path, preferential_attachment_fraction, scale, reciprocity)
     print("-----------------")
     print("Network Generated")
     print()

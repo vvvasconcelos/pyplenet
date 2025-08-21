@@ -602,7 +602,12 @@ class FileBasedGraph:
         
         if max_nodes <= 0:
             raise ValueError("max_nodes must be positive")
-            
+        
+        # Check if center_node is an isolate (no in-edges and no out-edges)
+        if self.out_degree(center_node) == 0 and self.in_degree(center_node) == 0:
+            print(f"Center node {center_node} is an isolate (no edges). Extraction stopped.")
+            return None
+        
         print(f"Extracting subgraph: center={center_node}, max_nodes={max_nodes}")
         
         # BFS to find closest nodes
@@ -634,7 +639,12 @@ class FileBasedGraph:
                     extracted_nodes.append(neighbor)
         
         extracted_nodes_set = set(extracted_nodes)
-        print(f"Found {len(extracted_nodes)} nodes via BFS")
+        
+        # Ensure clean output directory
+        if os.path.exists(output_path):
+            import shutil
+            shutil.rmtree(output_path)
+        os.makedirs(output_path, exist_ok=True)
         
         # Create new FileBasedGraph
         subgraph = FileBasedGraph(output_path)
@@ -646,10 +656,7 @@ class FileBasedGraph:
             else:
                 subgraph.add_node(node_id)
         
-        # Find and copy all edges between extracted nodes
-        print("Extracting edges between selected nodes...")
         edge_count = 0
-        
         # Optimized approach: scan adjacency file once instead of per-node
         if os.path.exists(self.adjacency_file):
             with open(self.adjacency_file, 'rb') as f:
@@ -669,8 +676,6 @@ class FileBasedGraph:
                         if src in extracted_nodes_set and dst in extracted_nodes_set:
                             subgraph.add_edge(src, dst)
                             edge_count += 1
-        
-        print(f"Extracted {edge_count} edges")
         
         # Fix the node count to reflect actual extracted nodes, not max ID
         subgraph.num_nodes = len(extracted_nodes)
@@ -746,21 +751,16 @@ class FileBasedGraph:
         try:
             import networkx as nx
         except ImportError:
-            raise ImportError("NetworkX is required for this functionality. Install with: pip install networkx")
-        
-        print(f"Converting FileBasedGraph to NetworkX DiGraph...")
-        print(f"Graph size: {self.number_of_nodes()} nodes, {self.number_of_edges()} edges")
+            raise ImportError("NetworkX is required for this functionality.")
         
         # Create empty directed graph
         G = nx.DiGraph()
         
         # Add nodes with attributes
         if include_node_attributes and self.node_attributes:
-            print("Adding nodes with attributes...")
             for node_id, attrs in self.node_attributes.items():
                 G.add_node(node_id, **attrs)
         else:
-            print("Adding nodes...")
             # Add only the nodes that actually exist (have attributes)
             if self.node_attributes:
                 G.add_nodes_from(self.node_attributes.keys())
@@ -769,7 +769,6 @@ class FileBasedGraph:
                 G.add_nodes_from(range(self.num_nodes))
         
         # Add edges
-        print("Adding edges...")
         edge_count = 0
         
         if hasattr(self, 'adjacency_file') and os.path.exists(self.adjacency_file):
@@ -811,7 +810,7 @@ class FileBasedGraph:
         
         # Verify counts match
         if G.number_of_nodes() != self.number_of_nodes() or G.number_of_edges() != self.number_of_edges():
-            print(f"Warning: Node/edge count mismatch!")
+            print(f"Warning: Node/edge count mismatch! (Duplicates culled)")
             print(f"  Original: {self.number_of_nodes()} nodes, {self.number_of_edges()} edges")
             print(f"  NetworkX: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
         

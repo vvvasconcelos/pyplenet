@@ -51,12 +51,8 @@ def calculate_reciprocity(G):
         
     Notes
     -----
-    For file-based graphs, this function reads the adjacency file twice:
-    once to collect all edges, and once to count reciprocal pairs. This
-    approach minimizes memory usage at the cost of additional I/O.
-    
-    The reciprocity is calculated as:
-    reciprocity = (number of reciprocal edge pairs) / (total number of edges)
+    Uses the same formula as NetworkX for consistency:
+    reciprocity = (total_edges - undirected_edges) * 2 / total_edges
     
     Examples
     --------
@@ -71,45 +67,33 @@ def calculate_reciprocity(G):
     if total_edges == 0:
         return 0
     
-    reciprocal_edges = 0
+    # Count unique undirected edges by collecting all edge pairs
+    edge_set = set()
     
-    # For file-based graphs, we need to be efficient
-    if hasattr(G, 'adjacency_file'):
-        # File-based implementation
-        edge_set = set()
-        
-        # First pass: collect all edges
-        if os.path.exists(G.adjacency_file):
-            with open(G.adjacency_file, 'rb') as f:
-                import struct
-                while True:
-                    data = f.read(80000)  # Read in chunks
-                    if not data:
-                        break
-                    num_edges = len(data) // 8
-                    edges = struct.unpack(f'{num_edges * 2}I', data)
-                    for i in range(0, len(edges), 2):
-                        src, dst = edges[i], edges[i + 1]
-                        edge_set.add((src, dst))
-        
-        # Second pass: count reciprocal edges
-        for src, dst in edge_set:
-            if (dst, src) in edge_set:
-                reciprocal_edges += 1
-        
-        # Each reciprocal pair is counted twice, so divide by 2
-        reciprocal_edges //= 2
-        
-    else:
-        # In-memory implementation
-        for src in range(G.number_of_nodes()):
-            out_neighbors = G.get_out_edges(src)
-            for dst in out_neighbors:
-                if src in G.get_in_edges(dst):
-                    reciprocal_edges += 1
-        reciprocal_edges //= 2
+    # Collect all edges
+    if os.path.exists(G.adjacency_file):
+        with open(G.adjacency_file, 'rb') as f:
+            import struct
+            while True:
+                data = f.read(80000)  # Read in chunks
+                if not data:
+                    break
+                num_edges = len(data) // 8
+                edges = struct.unpack(f'{num_edges * 2}I', data)
+                for i in range(0, len(edges), 2):
+                    src, dst = edges[i], edges[i + 1]
+                    edge_set.add((src, dst))
     
-    return reciprocal_edges / total_edges if total_edges > 0 else 0
+    # Convert to undirected edges (count unique pairs)
+    undirected_edges = set()
+    for src, dst in edge_set:
+        # Add the pair in canonical order (smaller node first)
+        undirected_edges.add((min(src, dst), max(src, dst)))
+    
+    # Use NetworkX formula: (total_edges - undirected_edges) * 2 / total_edges
+    n_overlap_edge = (total_edges - len(undirected_edges)) * 2
+    
+    return n_overlap_edge / total_edges
 
 def calculate_clustering_coefficient(G, sample_size=1000):
     """
@@ -155,9 +139,16 @@ def calculate_clustering_coefficient(G, sample_size=1000):
     if G.number_of_nodes() == 0:
         return 0
     
+    # Get actual node IDs (not internal indices)
+    if hasattr(G, 'node_attributes') and G.node_attributes:
+        actual_node_ids = list(G.node_attributes.keys())
+    else:
+        # Fallback to range if no node_attributes
+        actual_node_ids = list(range(G.number_of_nodes()))
+    
     # Sample nodes for efficiency
-    nodes_to_sample = min(sample_size, G.number_of_nodes())
-    sampled_nodes = random.sample(list(range(G.number_of_nodes())), nodes_to_sample)
+    nodes_to_sample = min(sample_size, len(actual_node_ids))
+    sampled_nodes = random.sample(actual_node_ids, nodes_to_sample)
     
     clustering_coeffs = []
     
@@ -231,8 +222,15 @@ def shortest_path_sample(G, sample_size=50, max_targets_per_source=100):
     if G.number_of_nodes() == 0:
         return []
     
-    sample_size = min(sample_size, G.number_of_nodes())
-    sampled_nodes = random.sample(list(range(G.number_of_nodes())), sample_size)
+    # Get actual node IDs (not internal indices)
+    if hasattr(G, 'node_attributes') and G.node_attributes:
+        actual_node_ids = list(G.node_attributes.keys())
+    else:
+        # Fallback to range if no node_attributes
+        actual_node_ids = list(range(G.number_of_nodes()))
+    
+    sample_size = min(sample_size, len(actual_node_ids))
+    sampled_nodes = random.sample(actual_node_ids, sample_size)
     
     path_lengths = []
     
@@ -296,17 +294,19 @@ def degree_distribution(G):
     in_degrees = []
     out_degrees = []
     
-    # Get degree information
-    in_degree_data = G.in_degree()
-    out_degree_data = G.out_degree()
+    # Get actual node IDs
+    if hasattr(G, 'node_attributes') and G.node_attributes:
+        actual_node_ids = list(G.node_attributes.keys())
     
-    for node_id, degree in in_degree_data:
-        if degree > 0:  # Exclude isolates
-            in_degrees.append(degree)
-    
-    for node_id, degree in out_degree_data:
-        if degree > 0:  # Exclude isolates
-            out_degrees.append(degree)
+    # Calculate degrees for actual nodes
+    for node_id in actual_node_ids:
+        in_deg = G.in_degree(node_id)
+        out_deg = G.out_degree(node_id)
+        
+        if in_deg > 0:  # Exclude isolates
+            in_degrees.append(in_deg)
+        if out_deg > 0:  # Exclude isolates
+            out_degrees.append(out_deg)
     
     return in_degrees, out_degrees
 
@@ -364,15 +364,10 @@ def runstats(G, show_plots=True, sample_size=100):
     print()
     
     # Reciprocity
-    if G.is_directed():
-        print("Calculating reciprocity...")
-        reciprocity = calculate_reciprocity(G)
-        print(f"Reciprocity: {reciprocity:.4f}")
-    else:
-        print("Reciprocity: Not applicable (graph is undirected)")
+    reciprocity = calculate_reciprocity(G)
+    print(f"Reciprocity: {reciprocity:.4f}")
     
     # Clustering coefficient
-    print("Calculating clustering coefficient...")
     avg_clustering = calculate_clustering_coefficient(G, sample_size)
     print(f"Average clustering coefficient: {avg_clustering:.4f}")
     

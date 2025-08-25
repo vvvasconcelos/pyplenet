@@ -6,7 +6,15 @@ Functions
 calculate_reciprocity : Compute reciprocity coefficient for directed graphs
 calculate_clustering_coefficient : Compute average clustering coefficient using sampling
 shortest_path_sample : Calculate shortest path lengths using BFS sampling
-degree_distribution : Extract degree distributions efficiently
+degree_distribution : Extract degree distributions    fit_r        
+        tail_ranks = ranks[tail_start:]
+        tail_degrees = degrees_sorted[tail_start:]
+        
+        if len(tail_degrees) > 5 and min(tail_degrees) > 0:s = {}
+    
+    if len(degrees_sorted) > 10:
+        # Find tail start (50% of distribution)
+        tail_start = _find_optimal_tail_start(degrees_sorted)ciently
 runstats : Comprehensive network analysis with optional visualizations
 
 Examples
@@ -310,6 +318,162 @@ def degree_distribution(G):
     
     return in_degrees, out_degrees
 
+def _fit_and_plot_power_law(ax, degrees_sorted, distribution_name, color='bo'):
+    """
+    Fit power law to degree distribution head and plot cumulative distribution.
+    
+    Fits a power law of the form P(X ≥ k) ∝ k^(-α) to the cumulative distribution
+    head (high-degree nodes), stopping at 90% of the cumulative probability.
+    Reports both the CDF exponent α and the traditional PDF exponent γ = α + 1.
+    
+    For degree distributions:
+    - PDF form: P(k) ∝ k^(-γ), where γ is typically 2-3
+    - CDF form: P(X ≥ k) ∝ k^(-α), where α = γ - 1
+    
+    The fitting range is from the highest degree down to the degree
+    where 90% of the distribution mass has been covered (x_max).
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axes object to plot on
+    degrees_sorted : list
+        Sorted degree sequence in descending order
+    distribution_name : str
+        Name for the distribution (e.g., "Out-Degree", "In-Degree")
+    color : str
+        Color for data points
+        
+    Returns
+    -------
+    dict
+        Dictionary containing fit results: 
+        - 'alpha': γ (PDF exponent, for backward compatibility)
+        - 'alpha_cdf': α (CDF exponent)
+        - 'gamma_pdf': γ (PDF exponent)
+        - 'x_max': maximum degree for power law fit (90% threshold)
+    """
+    # Create cumulative distribution
+    unique_degrees = sorted(set(degrees_sorted))
+    total_nodes = len(degrees_sorted)
+    
+    # Calculate cumulative probability P(X >= k) for each unique degree k
+    cum_prob = []
+    for degree in unique_degrees:
+        # Count how many nodes have degree >= this value
+        count = sum(1 for d in degrees_sorted if d >= degree)
+        cum_prob.append(count / total_nodes)
+    
+    # Plot the cumulative distribution
+    ax.loglog(unique_degrees, cum_prob, color, markersize=4, alpha=0.7, label='Data')
+    
+    fit_results = {}
+    
+    if len(unique_degrees) > 10:
+        # Fit head until 7 degrees
+        head_end_idx = 7
+        
+        # Fit from start to head_end_idx (high-degree nodes to medium-degree nodes)
+        if head_end_idx > 5:  # Need at least 5 points for fitting
+            head_degrees = unique_degrees[:head_end_idx + 1]
+            head_cum_prob = cum_prob[:head_end_idx + 1]
+            
+            # Filter out zero probabilities for log fitting
+            valid_indices = [i for i, p in enumerate(head_cum_prob) if p > 0]
+            if len(valid_indices) > 3:
+                head_degrees_valid = [head_degrees[i] for i in valid_indices]
+                head_cum_prob_valid = [head_cum_prob[i] for i in valid_indices]
+                
+                # Fit in log-log space: log(P(X >= k)) = -α * log(k) + C
+                # Note: α is the CDF exponent, related to PDF exponent γ by α = γ - 1
+                log_degrees = np.log10(head_degrees_valid)
+                log_cum_prob = np.log10(head_cum_prob_valid)
+                slope, intercept = np.polyfit(log_degrees, log_cum_prob, 1)
+                
+                # Calculate both exponents for clarity
+                alpha_cdf = -slope  # Exponent for P(X >= k) ∝ k^(-α)
+                gamma_pdf = alpha_cdf + 1  # Exponent for P(k) ∝ k^(-γ)
+                
+                # Plot fitted line
+                fitted_cum_prob = 10**(slope * log_degrees + intercept)
+                ax.loglog(head_degrees_valid, fitted_cum_prob, 'r-', 
+                         label=f'Power law: γ = {gamma_pdf:.2f} (α = {alpha_cdf:.2f})', linewidth=2)
+                
+                # Mark x_max (end of power law fit at 90% threshold)
+                x_max = head_degrees_valid[-1]
+                ax.axvline(x=x_max, color='purple', linestyle='--', 
+                          alpha=0.7, label=f'head cutoff')
+                 
+                fit_results = {
+                    'alpha_cdf': alpha_cdf,    # CDF exponent
+                    'gamma_pdf': gamma_pdf,    # PDF exponent (traditional)
+                    'alpha': gamma_pdf,        # For backward compatibility, use γ
+                    'x_max': x_max
+                }
+                
+                ax.legend()
+    
+    ax.set_title(f"{distribution_name} Cumulative Distribution")
+    ax.set_xlabel("Degree")
+    ax.set_ylabel("P(X ≥ degree)")
+    ax.grid(True, alpha=0.3)
+    
+    return fit_results
+
+def plot_degree_distributions(in_degrees, out_degrees, show_plots=True):
+    """
+    Plot degree distributions with power law tail fitting.
+    
+    Parameters
+    ----------
+    in_degrees : list
+        In-degree sequence
+    out_degrees : list  
+        Out-degree sequence
+    show_plots : bool
+        Whether to display the plots
+        
+    Returns
+    -------
+    dict
+        Dictionary containing fit results for both distributions
+    """
+    if not show_plots:
+        return {}
+    
+    # Determine subplot layout
+    n_plots = (1 if out_degrees else 0) + (1 if in_degrees else 0)
+    if n_plots == 0:
+        print("No degree data to plot.")
+        return {}
+    
+    fig, axes = plt.subplots(1, n_plots, figsize=(6*n_plots, 5))
+    if n_plots == 1:
+        axes = [axes]  # Make it iterable
+    
+    fit_results = {}
+    plot_idx = 0
+    
+    # Plot out-degree distribution
+    if out_degrees:
+        out_degrees_sorted = sorted(out_degrees, reverse=True)
+        fit_results['out_degree'] = _fit_and_plot_power_law(
+            axes[plot_idx], out_degrees_sorted, "Out-Degree", 'bo'
+        )
+        plot_idx += 1
+    
+    # Plot in-degree distribution  
+    if in_degrees:
+        in_degrees_sorted = sorted(in_degrees, reverse=True)
+        fit_results['in_degree'] = _fit_and_plot_power_law(
+            axes[plot_idx], in_degrees_sorted, "In-Degree", 'go'
+        )
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return fit_results
+
 def runstats(G, show_plots=True, sample_size=100):
     """
     Run comprehensive network statistics analysis on a graph.
@@ -398,32 +562,27 @@ def runstats(G, show_plots=True, sample_size=100):
     if out_degrees:
         avg_out_degree = np.mean(out_degrees)
         print(f"Average out-degree (excluding isolates): {avg_out_degree:.2f}")
-        
-        if show_plots:
-            plt.figure(figsize=(12, 4))
-            
-            # Out-degree distribution
-            plt.subplot(1, 2, 1)
-            plt.hist(out_degrees, bins=min(50, max(out_degrees)), alpha=0.7)
-            plt.title("Out-Degree Distribution")
-            plt.xlabel("Out-Degree")
-            plt.ylabel("Number of Nodes")
-            
-            # In-degree distribution
-            plt.subplot(1, 2, 2)
-            plt.hist(in_degrees, bins=min(50, max(in_degrees)), alpha=0.7)
-            plt.title("In-Degree Distribution")
-            plt.xlabel("In-Degree")
-            plt.ylabel("Number of Nodes")
-            
-            plt.tight_layout()
-            plt.show()
-    else:
-        print("No non-isolated nodes found.")
     
     if in_degrees:
         avg_in_degree = np.mean(in_degrees)
         print(f"Average in-degree (excluding isolates): {avg_in_degree:.2f}")
+    
+    # Plot degree distributions with power law analysis
+    if out_degrees or in_degrees:
+        fit_results = plot_degree_distributions(in_degrees, out_degrees, show_plots)
+        
+        # Print power law fit results if available
+        if 'out_degree' in fit_results and fit_results['out_degree']:
+            out_fit = fit_results['out_degree']
+            x_max_str = f", x_max = {out_fit['x_max']}" if 'x_max' in out_fit else ""
+            print(f"Out-degree power law: γ = {out_fit['alpha']:.2f} (CDF: α = {out_fit['alpha_cdf']:.2f}){x_max_str}")
+        
+        if 'in_degree' in fit_results and fit_results['in_degree']:
+            in_fit = fit_results['in_degree']
+            x_max_str = f", x_max = {in_fit['x_max']}" if 'x_max' in in_fit else ""
+            print(f"In-degree power law: γ = {in_fit['alpha']:.2f} (CDF: α = {in_fit['alpha_cdf']:.2f}){x_max_str}")
+    else:
+        print("No non-isolated nodes found.")
     
     print("=== Statistics Complete ===")
 

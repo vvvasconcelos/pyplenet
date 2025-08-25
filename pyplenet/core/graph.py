@@ -136,6 +136,7 @@ class FileBasedGraph:
         metadata = {
             'num_nodes': self.num_nodes,
             'num_edges': self.num_edges,
+            'node_attributes': {str(k): v for k, v in self.node_attributes.items()},
             'attrs_to_group': {str(k): v for k, v in self.attrs_to_group.items()},
             'group_to_attrs': self.group_to_attrs,
             'group_to_nodes': self.group_to_nodes,
@@ -162,6 +163,10 @@ class FileBasedGraph:
                 metadata = json.load(f)
                 self.num_nodes = metadata.get('num_nodes', 0)
                 self.num_edges = metadata.get('num_edges', 0)
+                
+                # Load node attributes
+                node_attributes_str = metadata.get('node_attributes', {})
+                self.node_attributes = {int(k): v for k, v in node_attributes_str.items()}
              
                 # Convert string keys back to tuples for attrs_to_group
                 attrs_to_group_str = metadata.get('attrs_to_group', {})
@@ -318,7 +323,7 @@ class FileBasedGraph:
         """
         self._close_adjacency_files()
         self._save_metadata()
-        print(f"Graph finalized: {self.num_nodes} nodes, {self.num_edges} edges")
+        #print(f"Graph finalized: {self.num_nodes} nodes, {self.num_edges} edges")
     
     def get_out_edges(self, node_id, batch_size=10000):
         """
@@ -556,6 +561,80 @@ class FileBasedGraph:
         """
         return self.out_degree(node_id) + self.in_degree(node_id)
     
+    def get_non_isolates_batch(self, node_list, max_count=None):
+        """
+        Efficiently find non-isolated nodes from a list of candidates.
+        
+        This method is much faster than calling get_out_edges() for each node
+        individually, as it reads through the adjacency files only once.
+        
+        Parameters
+        ----------
+        node_list : list of int
+            List of node IDs to check for isolation
+        max_count : int, optional
+            Maximum number of non-isolated nodes to return. If None, return all.
+            
+        Returns
+        -------
+        list of int
+            List of non-isolated node IDs from the input list
+            
+        Examples
+        --------
+        >>> candidates = [1, 5, 10, 20, 100]
+        >>> non_isolates = graph.get_non_isolates_batch(candidates, max_count=10)
+        >>> print(f"Found {len(non_isolates)} non-isolated nodes")
+        """
+        import struct
+        
+        node_set = set(node_list)
+        nodes_with_edges = set()
+        
+        # Check outgoing edges
+        if os.path.exists(self.adjacency_file):
+            with open(self.adjacency_file, 'rb') as f:
+                while True:
+                    data = f.read(1024 * 1024)  # 1MB chunks
+                    if not data:
+                        break
+                    num_edges = len(data) // 8
+                    edges = struct.unpack(f'{num_edges * 2}I', data)
+                    for i in range(0, len(edges), 2):
+                        src = edges[i]
+                        if src in node_set:
+                            nodes_with_edges.add(src)
+                            # Early exit if we have enough
+                            if max_count and len(nodes_with_edges) >= max_count:
+                                break
+                    if max_count and len(nodes_with_edges) >= max_count:
+                        break
+        
+        # Check incoming edges (if we need more nodes)
+        if (max_count is None or len(nodes_with_edges) < max_count) and os.path.exists(self.reverse_adjacency_file):
+            with open(self.reverse_adjacency_file, 'rb') as f:
+                while True:
+                    data = f.read(1024 * 1024)  # 1MB chunks
+                    if not data:
+                        break
+                    num_edges = len(data) // 8
+                    edges = struct.unpack(f'{num_edges * 2}I', data)
+                    for i in range(0, len(edges), 2):
+                        dst = edges[i]
+                        if dst in node_set:
+                            nodes_with_edges.add(dst)
+                            # Early exit if we have enough
+                            if max_count and len(nodes_with_edges) >= max_count:
+                                break
+                    if max_count and len(nodes_with_edges) >= max_count:
+                        break
+        
+        # Return in the order they appeared in the original list
+        result = [node for node in node_list if node in nodes_with_edges]
+        if max_count:
+            result = result[:max_count]
+        return result
+    
     def extract_subgraph(self, center_node, max_nodes, output_path, directed=True):
         """
         Extract a subgraph using BFS by node count centered on a specific node.
@@ -608,7 +687,7 @@ class FileBasedGraph:
             print(f"Center node {center_node} is an isolate (no edges). Extraction stopped.")
             return None
         
-        print(f"Extracting subgraph: center={center_node}, max_nodes={max_nodes}")
+        #print(f"Extracting subgraph: center={center_node}, max_nodes={max_nodes}")
         
         # BFS to find closest nodes
         visited = set()
@@ -677,13 +756,11 @@ class FileBasedGraph:
                             subgraph.add_edge(src, dst)
                             edge_count += 1
         
-        # Fix the node count to reflect actual extracted nodes, not max ID
-        subgraph.num_nodes = len(extracted_nodes)
-        
         # Copy all metadata completely
         subgraph.attrs_to_group = self.attrs_to_group.copy()
         subgraph.group_to_attrs = self.group_to_attrs.copy()
         subgraph.group_to_nodes = self.group_to_nodes.copy()
+        
         subgraph.existing_num_links = self.existing_num_links.copy()
         
         # Filter group_to_nodes to only include extracted nodes
@@ -694,11 +771,129 @@ class FileBasedGraph:
                 filtered_group_to_nodes[group_id] = filtered_nodes
         subgraph.group_to_nodes = filtered_group_to_nodes
         
+        # Fix the node count to reflect actual extracted nodes, not max ID
+        # This must be done AFTER finalize to ensure it's saved correctly
+        subgraph.num_nodes = len(extracted_nodes)
+        
         # Finalize the subgraph
         subgraph.finalize()
         
-        print(f"Subgraph created: {subgraph.number_of_nodes()} nodes, {subgraph.number_of_edges()} edges")
-        print(f"Saved to: {output_path}")
+        # Fix the node count again after finalize and re-save metadata
+        subgraph.num_nodes = len(extracted_nodes)
+        subgraph._save_metadata()
+        
+        #print(f"Subgraph created: {subgraph.number_of_nodes()} nodes, {subgraph.number_of_edges()} edges")
+        #print(f"Saved to: {output_path}")
+        
+        return subgraph
+    
+    def extract_subgraph_from_nodes(self, node_list, output_path):
+        """
+        Extract a subgraph containing only the specified nodes and edges between them.
+        
+        This method creates a new FileBasedGraph containing only the nodes in the
+        provided list and all edges that exist between those nodes in the original graph.
+        This is useful for creating multiplexed networks where different layers share
+        the same node set but have different edge patterns.
+        
+        Parameters
+        ----------
+        node_list : list of int
+            List of node IDs to include in the subgraph. All nodes must exist
+            in the original graph.
+        output_path : str
+            Directory path where the new subgraph will be stored. If the directory
+            exists, it will be cleared first.
+            
+        Returns
+        -------
+        FileBasedGraph
+            New FileBasedGraph object containing the specified nodes and edges
+            between them.
+            
+        Raises
+        ------
+        ValueError
+            If any node in node_list doesn't exist in the graph or if node_list
+            is empty.
+            
+        Examples
+        --------
+        >>> # Extract subgraph with specific nodes
+        >>> target_nodes = [1, 5, 10, 15, 20]
+        >>> subgraph = graph.extract_subgraph_from_nodes(target_nodes, "custom_subgraph")
+        >>> print(f"Extracted {subgraph.number_of_nodes()} nodes")
+        """
+        import struct
+        import os
+        from collections import deque
+        
+        if not node_list:
+            raise ValueError("node_list cannot be empty")
+        
+        # Validate all nodes exist in the graph
+        for node_id in node_list:
+            if node_id not in self.node_attributes:
+                raise ValueError(f"Node {node_id} not found in graph")
+        
+        node_set = set(node_list)
+        
+        # Ensure clean output directory
+        if os.path.exists(output_path):
+            import shutil
+            shutil.rmtree(output_path)
+        os.makedirs(output_path, exist_ok=True)
+        
+        # Create new FileBasedGraph
+        subgraph = FileBasedGraph(output_path)
+        
+        # Copy all specified nodes with their attributes
+        for node_id in node_list:
+            if node_id in self.node_attributes:
+                subgraph.add_node(node_id, **self.node_attributes[node_id])
+            else:
+                subgraph.add_node(node_id)
+        
+        edge_count = 0
+        # Scan adjacency file to find edges between specified nodes
+        if os.path.exists(self.adjacency_file):
+            with open(self.adjacency_file, 'rb') as f:
+                while True:
+                    # Read in chunks for better I/O performance
+                    data = f.read(1024 * 1024)  # 1MB chunks
+                    if not data:
+                        break
+                    
+                    num_edges = len(data) // 8
+                    edges = struct.unpack(f'{num_edges * 2}I', data)
+                    
+                    # Process all edges in this chunk
+                    for i in range(0, len(edges), 2):
+                        src, dst = edges[i], edges[i + 1]
+                        # Only add edges where both nodes are in our specified set
+                        if src in node_set and dst in node_set:
+                            subgraph.add_edge(src, dst)
+                            edge_count += 1
+        
+        # Set the node count to reflect actual nodes
+        subgraph.num_nodes = len(node_list)
+        
+        # Copy all metadata completely
+        subgraph.attrs_to_group = self.attrs_to_group.copy()
+        subgraph.group_to_attrs = self.group_to_attrs.copy()
+        subgraph.group_to_nodes = self.group_to_nodes.copy()
+        subgraph.existing_num_links = self.existing_num_links.copy()
+        
+        # Filter group_to_nodes to only include specified nodes
+        filtered_group_to_nodes = {}
+        for group_id, group_node_list in subgraph.group_to_nodes.items():
+            filtered_nodes = [node for node in group_node_list if node in node_set]
+            if filtered_nodes:  # Only keep groups that have nodes in subgraph
+                filtered_group_to_nodes[group_id] = filtered_nodes
+        subgraph.group_to_nodes = filtered_group_to_nodes
+        
+        # Finalize the subgraph
+        subgraph.finalize()
         
         return subgraph
     
